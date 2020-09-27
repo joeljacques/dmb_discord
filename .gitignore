@@ -1,6 +1,6 @@
 __pycache__/
 *.py[cod]
 *$py.class
-
+muddi/secrets.py
 *.db
 .idea/

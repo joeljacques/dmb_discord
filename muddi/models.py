@@ -1,6 +1,6 @@
 from datetime import timedelta, datetime, time
 from time import strptime, struct_time
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 from discord import Member
 
@@ -10,7 +10,7 @@ from muddi.spreadsheet import Spreadsheet
 
 
 class User:
-    def __init__(self, user_id, name, discord_tag="n/a", discord_id="n/a", gender="n/a", member_type="n/a"):
+    def __init__(self, user_id, name, discord_tag="", discord_id="", gender="n/a", member_type="n/a"):
         self.user_id: int = user_id
         self.name: str = name
         self.discord_tag: str = discord_tag
@@ -104,17 +104,17 @@ class User:
         User.update_from_discord_members(members)
 
     @classmethod
-    def get_for_name(cls, name) -> list:
+    def get_guest_for_name(cls, name):
         db = DB()
-        sql = """ SELECT * FROM users WHERE name=?"""
-        data = db.select(sql, (name,))
-        return [User(*x) for x in data]
+        sql = """ SELECT * FROM users WHERE name=? AND member_type=?"""
+        data = db.select(sql, (name, sh.GUEST))
+        return User(*data[0]) if data else None
 
     @classmethod
-    def get_for_discord_id(cls, discord_id):
+    def get_for_discord_id_or_tag(cls, discord_id, discord_tag=None):
         db = DB()
-        sql = """ SELECT * FROM users WHERE discord_id=?"""
-        return User(*db.select(sql, (discord_id,))[0])
+        sql = """ SELECT * FROM users WHERE discord_id=? OR discord_tag=? """
+        return User(*db.select(sql, (discord_id,discord_tag))[0])
 
     @classmethod
     def get_for_id(cls, user_id):
@@ -217,13 +217,13 @@ class Training:
             """
             db = DB()
             return db.commit(sql, (self.start, self.end, self.location, self.coach, self.description,
-                        self.cancelled, self.message_id))
+                        self.cancelled, self.message_id), insert=True)
         except Exception as e:
             print("couldn't insert")
 
-
     def update(self):
         if self.training_id:
+            set = lambda x: f"{x} = ?"
             db = DB()
             sql = """
                 UPDATE trainings
@@ -241,19 +241,24 @@ class Training:
     def remove(self):
         pass  # TODO: Implement
 
-    def cancel(self):
-        pass  # TODO: Implement
+    @classmethod
+    def get_for_id(cls, training_id):
+        sql = """
+        SELECT * from trainings
+        WHERE training_id = ?"""
+        db = DB()
+        result = db.select(sql, (training_id,))
+        return Training(*result[0]) if result else None
 
     @classmethod
-    def select_next_trainings(cls, day_offset=7):
-        local_time = datetime.today()
-        offset_time = local_time + timedelta(days=day_offset)
+    def select_next_trainings(cls, day_offset=7, reference=datetime.today(), include_cancelled=False):
+        offset_time = reference + timedelta(days=day_offset)
         sql = """
             SELECT * FROM trainings
-            WHERE start > ? and start <= ?
+            WHERE start > ? and start <= ? and cancelled = ?
             """
         db = DB()
-        return [Training(*x) for x in db.select(sql, (local_time, offset_time))]
+        return [Training(*x) for x in db.select(sql, (reference, offset_time, 1 if include_cancelled else 0))]
 
     def add_participant(self, user_id) -> bool:
         sql = """
@@ -277,6 +282,21 @@ class Training:
         else:
             self._participants = []
         return db.commit(sql, (user_id, self.training_id))
+
+    def remove_guest_participant(self, name: str) -> bool:
+        guest = User.get_guest_for_name(name)
+        return self.remove_participant(guest.user_id) if guest else False
+
+    def no_show(self, user_id):
+        if not next((usr for usr in self.participants if u.user_id == user_id), False):
+            return False
+        else:
+            sql = """
+                UPDATE participants
+                SET no_show = 1
+                WHERE training_id = ? AND user_id = ?"""
+            db = DB()
+            return db.commit(sql, (self.training_id, user_id))
 
     @property
     def participants(self) -> [User]:

@@ -32,6 +32,7 @@ participants = """
     CREATE TABLE IF NOT EXISTS participants (
         user_id integer NOT NULL,
         training_id integer NOT NULL,
+        noshow integer DEFAULT 0,
         FOREIGN KEY (user_id) REFERENCES users (user_id),
         FOREIGN KEY (training_id) REFERENCES trainings (training_id)
     )
@@ -59,7 +60,7 @@ class DB:
     def connect(self):
         return sqlite3.connect(self.database, detect_types=sqlite3.PARSE_DECLTYPES|sqlite3.PARSE_COLNAMES)
 
-    def commit(self, sql, parameters=None, insert=True):
+    def commit(self, sql, parameters=None, insert=False):
         result = None
         conn = None
         try:

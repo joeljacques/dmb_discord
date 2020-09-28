@@ -17,3 +17,4 @@ Add the following variables with your own keys and id's
 - `database_path` - (str) absolute path, including file name (.db ending) for the database
 - `bot_token` - the developer credentials token for your discord application
 # Run
+`> python main.py`

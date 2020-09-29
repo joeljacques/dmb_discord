@@ -1,12 +1,12 @@
 from datetime import timedelta, datetime, time
 from time import strptime, struct_time
-from typing import List, Dict, Optional
-
+from typing import List, Dict
 from discord import Member
 
 import muddi.spreadsheet as sh
 from muddi.database.db import DB
 from muddi.spreadsheet import Spreadsheet
+from muddi.utils.tools import valid_discord
 
 
 class User:
@@ -52,14 +52,14 @@ class User:
         u_tags = dict(list(map(lambda usr: (usr.discord_tag, usr), users)))
         u_names = dict(list(map(lambda usr: (usr.name, usr), users)))
         for r in rows:
-            rtag = r[sh.discord_tag]
+            rtag = r[sh.discord_tag].strip("@")
             rname = r[sh.u_name]
             rgender = r[sh.gender]
             rmember_type = r[sh.member_type]
-            if not(rtag in u_tags.keys()) and rtag and rtag != "n/a":
+            if rtag and valid_discord(rtag) and rtag not in u_tags.keys():
                 User(None, rname, discord_tag=rtag, gender=r[sh.gender], member_type=r[sh.member_type]).insert()
-            elif rtag or rname in u_names.keys():
-                user = u_tags[rtag] if rtag else u_names[rname]
+            elif (valid := (valid_discord(rtag))) or rname in u_names.keys():
+                user = u_tags[rtag] if valid else u_names[rname]
                 edited = False
                 if user.name != rname:
                     edited = True
@@ -70,12 +70,12 @@ class User:
                 if user.member_type != rmember_type:
                     edited = True
                     user.member_type = rmember_type
-                if user.discord_tag != rtag:
+                if user.discord_tag != rtag and valid_discord(rtag):
                     edited = True
                     user.discord_tag = rtag
                 if edited:
                     user.update()
-            elif rname and not (rname in u_names.keys()):
+            elif rname and rname not in u_names.keys():
                 User(None, rname, gender=rgender, member_type=rmember_type).insert()
 
     @classmethod
@@ -87,10 +87,12 @@ class User:
         for user in all_users:
             utag = user.discord_tag
             uid = user.discord_id
+            # add discord id if not in database
             if utag in member_tags.keys() and not user.discord_id:
                 user.discord_id = member_tags[utag].id
                 user.update()
-                ids.append(member_tags[utag].id)
+                ids.append(user.discord_id)
+            # update discord tag if changed TODO: will lead to new user being added if old discord tag is still in sheet
             elif uid in member_ids.keys() and utag != (tag := str(member_ids[uid])):
                 user.discord_tag = tag
                 user.update()
@@ -114,7 +116,8 @@ class User:
     def get_for_discord_id_or_tag(cls, discord_id, discord_tag=None):
         db = DB()
         sql = """ SELECT * FROM users WHERE discord_id=? OR discord_tag=? """
-        return User(*db.select(sql, (discord_id,discord_tag))[0])
+        ls = db.select(sql, (discord_id, discord_tag))
+        return User(*ls[0]) if ls else None  # todo change to all results?
 
     @classmethod
     def get_for_id(cls, user_id):
@@ -172,8 +175,8 @@ class Schedule:
             db = DB()
             sql = """
             SELECT * FROM trainings
-            WHERE start = ? AND end = ? AND location = ? AND coach = ? AND description = ?"""
-            trainings = db.select(sql, (nt.start, nt.end, nt.location, nt.coach, nt.description))
+            WHERE start = ? AND end = ? AND location = ? """
+            trainings = db.select(sql, (nt.start, nt.end, nt.location))
             if trainings:
                 result = Training(*trainings[0])
             else:
@@ -236,7 +239,7 @@ class Training:
                     message_id = ? 
                 WHERE training_id = ?"""
             db.commit(sql, (self.start, self.end, self.location, self.coach,
-                            self.description, self.cancelled, self.message_id))
+                            self.description, self.cancelled, self.message_id, self.training_id))
 
     def remove(self):
         pass  # TODO: Implement
@@ -251,14 +254,27 @@ class Training:
         return Training(*result[0]) if result else None
 
     @classmethod
+    def get_for_message_ids(cls, ids: List[int]):
+        # make list distinct
+        ids = set(ids)
+        result = []
+        if ids:
+            sql = f"""
+                SELECT * from trainings 
+                WHERE message_id in ({','.join(['?'] * len(ids))})"""
+            db = DB()
+            result = db.select(sql, tuple(ids))
+        return [Training(*r) for r in result]
+
+    @classmethod
     def select_next_trainings(cls, day_offset=7, reference=datetime.today(), include_cancelled=False):
         offset_time = reference + timedelta(days=day_offset)
         sql = """
             SELECT * FROM trainings
-            WHERE start > ? and start <= ? and cancelled = ?
-            """
+            WHERE start > ? and start <= ?
+            """ if include_cancelled else """ SELECT * FROM trainings Where start > ? and start <= ? and cancelled = 0"""
         db = DB()
-        return [Training(*x) for x in db.select(sql, (reference, offset_time, 1 if include_cancelled else 0))]
+        return [Training(*x) for x in db.select(sql, (reference, offset_time, ))]
 
     def add_participant(self, user_id) -> bool:
         sql = """

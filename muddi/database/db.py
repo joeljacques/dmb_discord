@@ -14,6 +14,11 @@ users = """
     )
     """
 
+users_index = """
+    CREATE INDEX IF NOT EXISTS idx_discord_id
+    ON users (discord_id)
+"""
+
 # specific training
 trainings = """
     CREATE TABLE IF NOT EXISTS trainings (
@@ -24,7 +29,7 @@ trainings = """
         coach integer,
         description text,
         cancelled integer DEFAULT 0,
-        message_id integer NOT NULL
+        message_id integer UNIQUE
     )
     """
 
@@ -38,6 +43,13 @@ participants = """
     )
     """
 
+participants_index = """
+    CREATE INDEX IF NOT EXISTS participants_training_idx
+    ON participants (user_id)
+"""
+
+setup_sql = [users, users_index, trainings, participants, participants_index]
+
 
 class DB:
     def __init__(self, database=database_path):
@@ -49,8 +61,8 @@ class DB:
             conn = self.connect()
             c = conn.cursor()
             # create all tables if not exist
-            for table in [users, trainings, participants]:
-                c.execute(table)
+            for q in setup_sql:
+                c.execute(q)
         except sqlite3.Error as error:
             print(error)
         finally:

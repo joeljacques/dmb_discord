@@ -1,8 +1,6 @@
 from datetime import date, timedelta, datetime
 import time
-from typing import Dict
 from threading import RLock
-from copy import deepcopy
 import discord
 from discord.ext import commands, tasks
 

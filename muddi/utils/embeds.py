@@ -33,7 +33,8 @@ def posting_embed(training, users: [(str, str, str)], add_emoji):
     embed.add_field(name="Registration", value=f"Click {add_emoji} to register. "
                                                f"Please contact {training.coach} or other coaches and techies, "
                                                f"if you want to bring guests!", inline=False)
-    embed.add_field(name="Coach", value=training.coach)
+    if training.coach:
+        embed.add_field(name="Coach", value=training.coach)
     women = reduce(lambda num, el: num + 1 if el[2] == 'w' else num, users, 0)
     men = reduce(lambda num, el: num + 1 if el[2] == 'm' else num, users, 0)
     embed.add_field(name="Women", value=str(women))

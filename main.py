@@ -34,8 +34,10 @@ async def on_member_join(member: discord.Member):
 @muddi.event
 async def on_message_delete(message: discord.Message):
     if message.id in muddi.message_ids:
-        training_id = Training.get_for_message_ids([message.id])[0].training_id
-        await muddi.managing_channel.send(content="Live training message has been deleted,"
+        training = Training.get_for_message_ids([message.id])[0]
+        if not training.cancelled:
+            training_id = training.training_id
+            await muddi.managing_channel.send(content="Live training message has been deleted,"
                                                   " which means that participants tracking doesn't work now. "
                                                   f"Enter ```.training cancel {training_id}``` to avoid errors and then"
                                                   f"```.training uncancel {training_id}``` if you want to post again.")
@@ -47,7 +49,7 @@ async def on_raw_reaction_add(reaction: discord.RawReactionActionEvent):
         return
     if str(reaction.emoji) == muddi.add_emoji and reaction.message_id in muddi.message_ids and reaction.user_id != muddi.user.id:
         training = Training.get_for_message_ids([reaction.message_id])[0]
-        if training.cancelled or any(p.discord_id == reaction.user_id for p in training.participants):
+        if any(p.discord_id == reaction.user_id for p in training.participants):
             return
         user = User.get_for_discord_id_or_tag(reaction.user_id, "no tag")
         if not user:
@@ -55,9 +57,10 @@ async def on_raw_reaction_add(reaction: discord.RawReactionActionEvent):
         else:
             uid = user.user_id
         training.add_participant(uid)
-        tr = deepcopy(training)
         muddi.trainings_lock.release()
-        await update_training_post(training)
+        if training.cancelled or any(p.discord_id == reaction.user_id for p in training.participants):
+            return
+        await muddi.update_training_post(training)
     else:
         muddi.trainings_lock.release()
 
@@ -70,13 +73,11 @@ async def on_raw_reaction_remove(reaction: discord.RawReactionActionEvent):
     if str(
             reaction.emoji) == muddi.add_emoji and reaction.message_id in muddi.message_ids and reaction.user_id != muddi.user.id:
         training = Training.get_for_message_ids([reaction.message_id])[0]
+        training.remove_participant(User.get_for_discord_id_or_tag(reaction.user_id).user_id)
         if training.cancelled:
             return
-
-        training.remove_participant(User.get_for_discord_id_or_tag(reaction.user_id).user_id)
-        tr = deepcopy(training)
         muddi.trainings_lock.release()
-        await update_training_post(tr)
+        await muddi.update_training_post(training)
     else:
         muddi.trainings_lock.release()
 
@@ -206,13 +207,13 @@ async def uncancel(ctx: commands.Context, training_id: int):
         try:
             await muddi.posting_channel.fetch_message(tr.message_id)
             muddi.message_ids.append(tr.message_id)
-            await update_training_post(tr)  # hopefully won't lead to inconsistencies :S
+            await muddi.update_training_post(tr)  # hopefully won't lead to inconsistencies :S
             tr.update()
             await ctx.send(content=f"{ctx.author.mention}, training #{training_id} has been uncancelled.")
 
         except discord.NotFound:
             await muddi.post_training(tr)  # new message ID is going to be added in this method
-            await update_training_post(tr)
+            await muddi.update_training_post(tr)
             await ctx.send(content=f"{ctx.author.mention}, I posted a new message, since the old one was deleted.")
 
 
@@ -232,7 +233,7 @@ async def training_set_attribute(ctx, training_id: int, attr: str, new_value):
     setattr(training, attr, new_value)
     training.update()
     muddi.trainings_lock.release()
-    await update_training_post(training)
+    await muddi.update_training_post(training)
     await ctx.send(content="Successfully changed training!")
 
 
@@ -285,7 +286,7 @@ async def training_add(ctx):
 async def training_remove(ctx):
     """ Remove a guest from the participants list. The name is the displayed name in the participants list."""
     if ctx.invoked_subcommand is None:
-        await ctx.send("Use `training add guest \{training id\} {{guest name}} to remove")
+        await ctx.send("Use `training remove guest \{training id\} \"{guest name}\" to remove")
 
 
 @training_add.command(name="guest")
@@ -308,7 +309,7 @@ async def add_guest(ctx, training_id: int, guest_rowid: int):
         user = User.get_guest_for_name(guest_row[sh.u_name])
         if not user:
             User.update_from_sheet()
-            user = User.get_guest_for_name(guest_row[sh.u_name])[0]
+            user = User.get_guest_for_name(guest_row[sh.u_name])
         if user.name in [p.name for p in tr.participants]:
             await ctx.send(content=f"This person is already a participant!")
             return
@@ -319,7 +320,7 @@ async def add_guest(ctx, training_id: int, guest_rowid: int):
             return
         if tr.message_id not in muddi.message_ids:
             muddi.message_ids.append(tr.message_id)
-        await update_training_post(tr)
+        await muddi.update_training_post(tr)
         await ctx.send(content=f"{ctx.author.mention}, {user.name} has been added to training #{training_id}")
 
 
@@ -336,22 +337,15 @@ async def remove_guest(ctx: commands.Context, training_id: int, name: str):
                 if p.member_type == sh.GUEST and p.name == name:
                     if tr.remove_participant(p.user_id):
                         muddi.trainings_lock.release()
-                        await update_training_post(tr)
+                        await muddi.update_training_post(tr)
                         await ctx.send(content=f"{ctx.author.mention}, {name} has been removed from training #{training_id}")
                         return
     muddi.trainings_lock.release()
     past_training = Training.get_for_id(training_id)
     if past_training:
         if past_training.remove_guest_participant(name):
-            await update_training_post(past_training)
+            await muddi.update_training_post(past_training)
             await ctx.send(content=f"Successfully removed {name} from training #{training_id}")
-
-
-async def update_training_post(training: Training):
-    message = await muddi.posting_channel.fetch_message(training.message_id)
-    await message.edit(embed=posting_embed(
-        training, [(u.name, mem.mention if (mem := muddi.guild.get_member(u.discord_id)) else "(Guest)",
-                    u.gender) for u in training.participants], muddi.add_emoji))
 
 
 async def remove_guest_name(training: Training, name: str):

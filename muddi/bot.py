@@ -71,6 +71,12 @@ class Muddi(commands.Bot):
         training_id = training.insert() if not training.training_id else training.training_id
         training.training_id = training_id
         self.message_ids.append(training.message_id)
-        await self.managing_channel.send(content= "new training was just postet", embed=managing_embed(training, post))
+        await self.managing_channel.send(content="new training was just postet", embed=managing_embed(training, post))
 
+
+    async def update_training_post(self, training: Training):
+        message = await self.posting_channel.fetch_message(training.message_id)
+        await message.edit(embed=posting_embed(
+            training, [(u.name, mem.mention if (mem := self.guild.get_member(u.discord_id)) else "(Guest)",
+                        u.gender) for u in training.participants], self.add_emoji))
 

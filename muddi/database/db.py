@@ -38,8 +38,12 @@ participants = """
         user_id integer NOT NULL,
         training_id integer NOT NULL,
         noshow integer DEFAULT 0,
-        FOREIGN KEY (user_id) REFERENCES users (user_id),
-        FOREIGN KEY (training_id) REFERENCES trainings (training_id)
+        FOREIGN KEY (user_id) 
+            REFERENCES users (user_id)
+            ON DELETE CASCADE,
+        FOREIGN KEY (training_id) 
+            REFERENCES trainings (training_id)
+            ON DELETE CASCADE
     )
     """
 
